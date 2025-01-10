@@ -207,7 +207,7 @@ mod tests {
             .expect("Failed to get recent blockhash");
 
         let transaction = Transaction::new_signed_with_payer(
-            enroll_ix, 
+            &enroll_ix, 
              Some(&signer.pubkey()),
             &[&signer],
             blockhash,
