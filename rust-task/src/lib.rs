@@ -7,16 +7,36 @@ use solana_sdk::{
 };
 use std::io::{self, BufRead};
 use std::str::FromStr;
-
+use anchor_lang::{AnchorSerialize, AnchorDeserialize};
 const RPC_URL: &str = "https://api.devnet.solana.com";
+
+pub fn get_discriminator(namespace: &str, name: &str) -> [u8; 8] {
+    let preimage = format!("{}:{}", namespace, name);
+    let mut sighash = [0u8; 8];
+    sighash.copy_from_slice(
+        &anchor_lang::solana_program::hash::hash(preimage.as_bytes()).to_bytes()[..8],
+    );
+
+    sighash
+}
+
+#[derive(AnchorSerialize, Debug)]
+pub struct CompleteArgs {
+    github: Vec<u8>,
+}
+
+#[derive(AnchorSerialize, Debug)]
+pub struct UpdateArgs {
+    github: [u8],
+}
 
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use crate::programs::Turbin3_prereq::{CompleteArgs, Turbin3PrereqProgram, UpdateArgs};
+    // use crate::programs::Turbin3_prereq::{CompleteArgs, Turbin3PrereqProgram, UpdateArgs};
     use solana_client::{nonblocking::rpc_client, rpc_client::RpcClient};
-    use solana_sdk::{message::Message, signer::keypair, system_program};
+    use solana_sdk::{account::Account, instruction::{AccountMeta, Instruction}, message::Message, signer::keypair, system_program};
 
     #[test]
     fn keygen() {
@@ -142,30 +162,64 @@ mod tests {
             signature.to_string()
         )
     }
+
+    //program id was changed but we know the instruction name and the data we are passing into it , so we use this method
     #[test]
-    fn enroll() {
+    fn enroll() -> Result<(), Box<dyn std::error::Error>> {
+        let program_id = Pubkey::from_str("ADcaide4vBtKuyZQqdU689YqEGZMCmS4tL35bdTv9wJa")?;
+
         let rpc_client = RpcClient::new(RPC_URL);
 
         let signer = read_keypair_file("Turbin3-wallet.json").expect("Couldn't find wallet file");
-        let prereq = Turbin3PrereqProgram::derive_program_address(&[
+        // let prereq = Turbin3PrereqProgram::derive_program_address(&[
+        //     b"prereq",
+        //     signer.pubkey().to_bytes().as_ref(),
+        // ]);
+        
+        let (prereq, bump) = Pubkey::find_program_address(&[
             b"prereq",
             signer.pubkey().to_bytes().as_ref(),
-        ]);
+        ], &program_id);
+
+        let mut accounts :Vec<AccountMeta> = Vec::with_capacity(3);
+
+        accounts.push(AccountMeta::new(signer.pubkey(), false));
+        accounts.push(AccountMeta::new(prereq, false));
+        accounts.push(AccountMeta::new(system_program::id(), false));
+
         let args = CompleteArgs {
             github: b"adpthegreat".to_vec(),
+        };
+
+        let ix_discriminator = get_discriminator("global", "complete");
+            let mut ix_data = Vec::with_capacity(256);
+            ix_data.extend_from_slice(&ix_discriminator);
+            args.serialize(&mut ix_data)?;
+
+        let enroll_ix = Instruction {
+            program_id,
+            accounts,
+            data: ix_data
         };
         // Get recent blockhash
         let blockhash = rpc_client
             .get_latest_blockhash()
             .expect("Failed to get recent blockhash");
 
-        let transaction = Turbin3PrereqProgram::complete(
-            &[&signer.pubkey(), &prereq, &system_program::id()],
-            &args,
-            Some(&signer.pubkey()),
+        let transaction = Transaction::new_signed_with_payer(
+            enroll_ix, 
+             Some(&signer.pubkey()),
             &[&signer],
             blockhash,
         );
+        // let transaction = Turbin3PrereqProgram::complete(
+        //     &[&signer.pubkey(), &prereq, &system_program::id()],
+        //     &args,
+        //     Some(&signer.pubkey()),
+        //     &[&signer],
+        //     blockhash,
+        // );
+
         let signature = rpc_client
             .send_and_confirm_transaction(&transaction)
             .expect("Failed to send transaction");
@@ -174,5 +228,7 @@ mod tests {
 https://explorer.solana.com/tx/{}/?cluster=devnet",
             signature
         );
+        
+        Ok(())
     }
 }
